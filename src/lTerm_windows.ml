@@ -137,7 +137,7 @@ type char_info = {
 }
 
 type char_info_raw = {
-  cir_char : UChar.t;
+  cir_char : Uchar.t;
   cir_foreground : int;
   cir_background : int;
 }

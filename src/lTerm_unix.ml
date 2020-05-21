@@ -7,7 +7,6 @@
  * This file is a part of Lambda-Term.
  *)
 
-open CamomileLibraryDefault.Camomile
 open LTerm_key
 
 let return, (>>=), (>|=) = Lwt.return, Lwt.(>>=), Lwt.(>|=)
@@ -324,32 +323,38 @@ let system_encoding =
    | Parsing of encoded characters                                   |
    +-----------------------------------------------------------------+ *)
 
-class output_single (cell : UChar.t option ref) = object
-  method put char = cell := Some char
-  method flush () = ()
-  method close_out () = ()
-end
-
-let parse_char encoding st first_byte =
-  let cell = ref None in
-  let output = new CharEncoding.convert_uchar_output encoding (new output_single cell) in
-  let rec loop st =
-    match !cell with
-      | Some char ->
-          return char
-      | None ->
-          Lwt_stream.next st >>= fun byte ->
-          assert (output#output (Bytes.make 1 byte) 0 1 = 1);
-          output#flush ();
-          loop st
+let parse_char st first_byte =
+  let open Lwt in
+  let cp1= int_of_char first_byte in
+  let parse st=
+    match first_byte with
+    | '\x00' .. '\x7f'-> return (Uchar.of_int cp1)
+    | '\xc0' .. '\xdf'-> Lwt_stream.next st >|= int_of_char >>= fun cp2->
+      return @@ Uchar.of_int
+        (((cp1 land 0x1f) lsl 6) lor (cp2 land 0x3f))
+    | '\xe0' .. '\xef'->
+      Lwt_stream.next st >|= int_of_char >>= fun cp2->
+      Lwt_stream.next st >|= int_of_char >>= fun cp3->
+      return @@ Uchar.of_int
+        (((cp1 land 0x0f) lsl 12)
+        lor ((cp2 land 0x3f) lsl 6)
+        lor (cp3 land 0x3f))
+    | '\xf0' .. '\xf7'->
+      Lwt_stream.next st >|= int_of_char >>= fun cp2->
+      Lwt_stream.next st >|= int_of_char >>= fun cp3->
+      Lwt_stream.next st >|= int_of_char >>= fun cp4->
+      return @@ Uchar.of_int
+        (((cp1 land 0x07) lsl 18)
+        lor ((cp2 land 0x3f) lsl 12)
+        lor ((cp3 land 0x3f) lsl 6)
+        lor (cp4 land 0x3f))
+    | _-> assert false
   in
   Lwt.catch
-    (fun () ->
-      assert (output#output (Bytes.make 1 first_byte) 0 1 = 1);
-      Lwt_stream.parse st loop)
+    (fun () -> Lwt_stream.parse st parse)
     (function
-    | CharEncoding.Malformed_code | Lwt_stream.Empty ->
-        return (UChar.of_char first_byte)
+    | Lwt_stream.Empty ->
+        return (Uchar.of_char first_byte)
     | exn -> Lwt.fail exn)
 
 (* +-----------------------------------------------------------------+
@@ -846,7 +851,7 @@ let find_sequence seq =
   in
   loop 0 (Array.length sequences)
 
-let rec parse_event ?(escape_time = 0.1) encoding stream =
+let rec parse_event ?(escape_time = 0.1) stream =
   Lwt_stream.next stream >>= fun byte ->
   match byte with
     | '\x1b' -> begin
@@ -882,7 +887,7 @@ let rec parse_event ?(escape_time = 0.1) encoding stream =
                                  | _ -> raise Exit);
                           })
                 with Exit ->
-                  parse_event encoding stream
+                  parse_event stream
               end
             | seq ->
                 match find_sequence seq with
@@ -945,7 +950,7 @@ let rec parse_event ?(escape_time = 0.1) encoding stream =
                                                     shift = false; code = Char(Uchar.of_char byte) })
                       | byte' ->
                           Lwt_stream.junk stream >>= fun () ->
-                          parse_char encoding stream byte' >>= fun code ->
+                          parse_char stream byte' >>= fun code ->
                           return (LTerm_event.Key { control = false; meta = true;
                                                     shift = false; code = Char (Uchar.of_int (UChar.code code)) })
                     end
@@ -966,6 +971,6 @@ let rec parse_event ?(escape_time = 0.1) encoding stream =
                                   shift = false; code = Char(Uchar.of_char byte) })
     | _ ->
         (* Encoded characters *)
-        parse_char encoding stream byte >>= fun code ->
+        parse_char stream byte >>= fun code ->
         return (LTerm_event.Key { control = false; meta = false;
                                   shift = false; code = Char (Uchar.of_int (UChar.code code)) })
