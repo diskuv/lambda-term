@@ -952,7 +952,7 @@ let rec parse_event ?(escape_time = 0.1) stream =
                           Lwt_stream.junk stream >>= fun () ->
                           parse_char stream byte' >>= fun code ->
                           return (LTerm_event.Key { control = false; meta = true;
-                                                    shift = false; code = Char (Uchar.of_int (UChar.code code)) })
+                                                    shift = false; code = Char code })
                     end
             end
           | exn -> Lwt.fail exn)
@@ -973,4 +973,4 @@ let rec parse_event ?(escape_time = 0.1) stream =
         (* Encoded characters *)
         parse_char stream byte >>= fun code ->
         return (LTerm_event.Key { control = false; meta = false;
-                                  shift = false; code = Char (Uchar.of_int (UChar.code code)) })
+                                  shift = false; code = Char code })

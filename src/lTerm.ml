@@ -326,7 +326,7 @@ let read_char term =
             LTerm_key.control = false;
             LTerm_key.meta = false;
             LTerm_key.shift = false;
-            LTerm_key.code = LTerm_key.Char (Uchar.of_int (UChar.code char));
+            LTerm_key.code = LTerm_key.Char char;
           })
 
 let rec next_event term =
