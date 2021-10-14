@@ -14,6 +14,15 @@ let return, (>>=) = Lwt.return, Lwt.(>>=)
 
 let uspace = Uchar.of_char ' '
 let yspace = Zed_char.unsafe_of_uChar uspace
+(* https://www.unicode.org/versions/Unicode6.1.0/ch16.pdf
+  > U+2060 word joiner behaves like U+00A0 no-break space in that it indicates the
+  > absence of word boundaries; however, the word joiner has no width. The function
+  > of the character is to indicate that line breaks are not allowed between the
+  > adjoining characters, except next to hard line break.
+  We'll use this when we have to "print" a character that takes no space, when all
+  the characters belong to the same line.
+*)
+let wordjoiner = Zed_char.unsafe_of_uChar (Uchar.of_int 0x2060)
 
 (* +-----------------------------------------------------------------+
    | TTYs sizes                                                      |
@@ -1164,6 +1173,12 @@ let blank_windows = {
   LTerm_windows.ci_background = 0;
 }
 
+let wordjoiner_windows = {
+  LTerm_windows.ci_char = wordjoiner;
+  LTerm_windows.ci_foreground = 7;
+  LTerm_windows.ci_background = 0;
+}
+
 let windows_char_info term point char =
   if point.LTerm_draw.reverse then {
     LTerm_windows.ci_char = char;
@@ -1206,7 +1221,12 @@ let render_windows term kind handle_newlines matrix =
                 Array.unsafe_set res i (windows_char_info term point char);
                 loop (i + 1)
               end
-            | WidthHolder _n-> res
+            | WidthHolder _n->
+              (* Don't advance the console write position since the previous Elem already
+                 advanced the the write position by more than one character when it wrote the multichar
+                 width character. *)
+              Array.unsafe_set res i wordjoiner_windows;
+              loop (i + 1)
           end
         in
         loop 0)
