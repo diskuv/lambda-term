@@ -1,0 +1,5 @@
+# Declare files that will always have LF line endings on checkout.
+# OCaml multiline strings will use include any embedded carriage returns, so keep OCaml strings consistent.
+# * Looks garbled if CRLF, for example, in examples/editor.ml.
+*.mli text eol=lf
+*.ml text eol=lf
