@@ -293,6 +293,7 @@ CAMLprim value lt_windows_get_console_mode(value val_fd)
   Field(result, 4) = Val_bool(mode & ENABLE_PROCESSED_INPUT);
   Field(result, 5) = Val_bool(mode & ENABLE_QUICK_EDIT_MODE);
   Field(result, 6) = Val_bool(mode & ENABLE_WINDOW_INPUT);
+  Field(result, 7) = Val_bool(mode & ENABLE_EXTENDED_FLAGS);
   return result;
 }
 
@@ -307,6 +308,7 @@ CAMLprim value lt_windows_set_console_mode(value val_fd, value val_mode)
   if (Bool_val(Field(val_mode, 4))) mode |= ENABLE_PROCESSED_INPUT;
   if (Bool_val(Field(val_mode, 5))) mode |= ENABLE_QUICK_EDIT_MODE;
   if (Bool_val(Field(val_mode, 6))) mode |= ENABLE_WINDOW_INPUT;
+  if (Bool_val(Field(val_mode, 7))) mode |= ENABLE_EXTENDED_FLAGS;
 
   if (!SetConsoleMode(Handle_val(val_fd), mode)) {
     win32_maperr(GetLastError());

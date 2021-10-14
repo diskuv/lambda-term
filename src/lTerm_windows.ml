@@ -94,6 +94,7 @@ type console_mode = {
   cm_processed_input : bool;
   cm_quick_edit_mode : bool;
   cm_window_input : bool;
+  cm_extended_flags : bool;
 }
 
 external get_console_mode : Unix.file_descr -> console_mode = "lt_windows_get_console_mode"

@@ -423,6 +423,11 @@ let enter_raw_mode term =
           LTerm_windows.cm_mouse_input = true;
           LTerm_windows.cm_processed_input = false;
           LTerm_windows.cm_window_input = true;
+          (* We disable quick edit mode which is a mode where the user can use
+            the mouse to select and edit text. Disabling requires
+            ENABLE_EXTENDED_FLAGS and !ENABLE_QUICK_EDIT_MODE *)
+          LTerm_windows.cm_quick_edit_mode = false;
+          LTerm_windows.cm_extended_flags = true;
       };
       term.raw_mode <- true;
       return (Mode_windows mode)
