@@ -59,6 +59,39 @@ val create :
       ]}
   *)
 
+val create_custom :
+  model : string ->
+  size : LTerm_geom.size ->
+  input_stream : char Lwt_stream.t ->
+  mock_enter_raw_mode : (unit -> unit Lwt.t) ->
+  mock_leave_raw_mode : (unit -> unit Lwt.t) ->
+  Lwt_unix.file_descr -> Lwt_io.output_channel -> t Lwt.t
+(** [create_custom ~model ~size ~input_stream ~mock_enter_raw_mode ~mock_leave_raw_mode
+    output_fd output_channel] creates a new terminal with a
+    user-supplied [input_stream] for reading the terminal inputs.
+    
+    The [output_fd] and [output_channel] will be sent
+    raw terminal escape sequences. It is your responsibility to close the file
+    descriptor and channel when finished.
+        
+    Use cases include:
+    
+    * analyse the side effects performed by a consumer of a terminal; for example
+      inspecting or offline rendering a widget that must be connected to a terminal
+    * bridging a terminal across a SSH/WebSocket/etcetera connection
+    
+    Parameters:
+
+    - [model] is the type of the terminal, such as "rxvt" or
+    "xterm". It defaults to the contents of the "TERM" environment
+    variable, or to "dumb" if this one is not found. It is used to
+    determine capabilities of the terminal, such as the number of
+    colors. 
+    - [input_stream] is the stream of characters read from the terminal
+    - [mock_enter_raw_mode] is the function executed when [enter_raw_mode] is called
+    - [mock_leave_raw_mode] is the function executed when [leave_raw_mode] is called
+    *)
+
 (** {6 Informations} *)
 
 val model : t -> string
@@ -110,12 +143,18 @@ val enter_raw_mode : t -> mode Lwt.t
       only complete line are returned. It returns the current terminal
       mode that can be restored using {!leave_raw_mode}.
 
+      For [create_custom] terminals the [enter_raw_mode] function
+      passed in [create_custom] is invoked.
+
       It raises {!Not_a_tty} if the input of the given terminal is not
       tty. *)
 
 val leave_raw_mode : t -> mode -> unit Lwt.t
   (** [leave_raw_mode term mode] leaves the raw mode by restoring the
       given mode.
+
+      For [create_custom] terminals the [leave_raw_mode] function
+      passed in [create_custom] is invoked.
 
       It raises {!Not_a_tty} if the input of the given terminal is not
       tty. *)
@@ -352,6 +391,10 @@ val stderr : t Lwt.t Lazy.t
   (** Terminal using {!Lwt_unix.stdin} as input and {!Lwt_unix.stderr}
       as output. *)
 
+val null_file_descr : unit -> Lwt_unix.file_descr Lwt.t
+  (** File descriptor of ["/dev/null"] on Unix or ["NUL"] on Windows. It is
+      your responsibility to close the file descriptor. *)
+
 (** {6 Low-level functions} *)
 
 val get_size_from_fd : Lwt_unix.file_descr -> LTerm_geom.size Lwt.t
@@ -369,6 +412,8 @@ val set_io :
   ?outgoing_fd : Lwt_unix.file_descr -> ?outgoing_channel : Lwt_io.output_channel -> t -> unit Lwt.t
   (** Modifies file descriptors/channels of a terminal. Unspecified
       arguments are kept unchanged.
+
+      Ignored for [create_custom] terminals.
 
       Note: before modifying a terminal you should ensure that no
       operation is pending on it. *)

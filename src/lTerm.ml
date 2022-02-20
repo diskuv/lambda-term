@@ -53,12 +53,18 @@ let () =
 
 module Int_map = Map.Make(struct type t = int let compare a b = a - b end)
 
+type testable = {
+  mock_enter_raw_mode: unit -> unit Lwt.t;
+  mock_leave_raw_mode: unit -> unit Lwt.t;
+}
+type ttype = RealTerminal | CustomTerminal of testable
 type t = {
   model : string;
   colors : int;
   windows : bool;
   bold_is_bright : bool;
   color_map : LTerm_color_mappings.map;
+  ttype : ttype;
   (* Informations. *)
 
   mutable raw_mode : bool;
@@ -107,6 +113,7 @@ type t = {
   mutable escape_time : float;
   (* Time to wait before returning the escape key. *)
 }
+
 
 (* +-----------------------------------------------------------------+
    | Signals                                                         |
@@ -165,6 +172,19 @@ exception No_such_encoding of string
 
 let empty_stream = Lwt_stream.from (fun () -> return None)
 
+let color_map = function
+    | 16 -> LTerm_color_mappings.colors_16
+    | 88 -> LTerm_color_mappings.colors_88
+    | 256 -> LTerm_color_mappings.colors_256
+    | n -> Printf.ksprintf failwith "LTerm.create: unknown number of colors (%d)" n
+
+let bold_is_bright = function
+    | "linux" (* The linux frame buffer *)
+    | "xterm-color" (* The MacOS-X terminal *) ->
+        true
+    | _ ->
+        false
+
 let create
       ?(windows=Sys.win32)
       ?(model=default_model)
@@ -173,21 +193,8 @@ let create
   Lwt.catch (fun () ->
     (* Colors stuff. *)
     let colors = if windows then 16 else colors_of_term model in
-    let bold_is_bright =
-      match model with
-        | "linux" (* The linux frame buffer *)
-        | "xterm-color" (* The MacOS-X terminal *) ->
-            true
-        | _ ->
-            false
-    in
-    let color_map =
-      match colors with
-        | 16 -> LTerm_color_mappings.colors_16
-        | 88 -> LTerm_color_mappings.colors_88
-        | 256 -> LTerm_color_mappings.colors_256
-        | n -> Printf.ksprintf failwith "LTerm.create: unknown number of colors (%d)" n
-    in
+    let bold_is_bright = bold_is_bright model in
+    let color_map = color_map colors in
     (* Encodings. *)
     (* Check if fds are ttys. *)
     Lwt_unix.isatty incoming_fd >>= fun incoming_is_a_tty ->
@@ -199,6 +206,7 @@ let create
       windows;
       bold_is_bright;
       color_map;
+      ttype = RealTerminal;
       raw_mode = false;
       incoming_fd;
       outgoing_fd;
@@ -233,27 +241,68 @@ let create
     return term)
     Lwt.fail
 
+let create_custom
+      ~model ~size ~input_stream ~mock_enter_raw_mode ~mock_leave_raw_mode
+      outgoing_fd outgoing_channel
+  =
+  (* Colors stuff. *)
+  let colors = colors_of_term model in
+  let bold_is_bright = bold_is_bright model in
+  let color_map = color_map colors in
+  (* Create the terminal. *)
+  return {
+    model;
+    colors;
+    windows = false;
+    bold_is_bright;
+    color_map;
+    ttype = CustomTerminal {mock_enter_raw_mode; mock_leave_raw_mode};
+    raw_mode = false;
+    (* incoming_fd is not used *)
+    incoming_fd = Lwt_unix.stdin;
+    outgoing_fd;
+    (* ic is not used *)
+    ic = Lwt_io.stdin;
+    oc = outgoing_channel;
+    input_stream;
+    next_event = None;
+    read_event = false;
+    outgoing_is_utf8 = true;
+    notify = Lwt_condition.create ();
+    event = E.never;
+    incoming_is_a_tty = true;
+    outgoing_is_a_tty = true;
+    escape_time = 0.1;
+    size;
+    last_reported_size = size;
+  }
+
 let set_io ?incoming_fd ?incoming_channel ?outgoing_fd ?outgoing_channel term =
-  let get opt x =
-    match opt with
-      | Some x -> x
-      | None -> x
-  in
-  let incoming_fd = get incoming_fd term.incoming_fd
-  and outgoing_fd = get outgoing_fd term.outgoing_fd
-  and incoming_channel = get incoming_channel term.ic
-  and outgoing_channel = get outgoing_channel term.oc in
-  (* Check if fds are ttys. *)
-  Lwt_unix.isatty incoming_fd >>= fun incoming_is_a_tty ->
-  Lwt_unix.isatty outgoing_fd >>= fun outgoing_is_a_tty ->
-  (* Apply changes. *)
-  term.incoming_fd <- incoming_fd;
-  term.outgoing_fd <- outgoing_fd;
-  term.ic <- incoming_channel;
-  term.oc <- outgoing_channel;
-  term.incoming_is_a_tty <- incoming_is_a_tty;
-  term.outgoing_is_a_tty <- outgoing_is_a_tty;
-  return ()
+  match term.ttype with
+  | CustomTerminal _ ->
+    return ()
+  | RealTerminal -> begin
+    let get opt x =
+      match opt with
+        | Some x -> x
+        | None -> x
+    in
+    let incoming_fd = get incoming_fd term.incoming_fd
+    and outgoing_fd = get outgoing_fd term.outgoing_fd
+    and incoming_channel = get incoming_channel term.ic
+    and outgoing_channel = get outgoing_channel term.oc in
+    (* Check if fds are ttys. *)
+    Lwt_unix.isatty incoming_fd >>= fun incoming_is_a_tty ->
+    Lwt_unix.isatty outgoing_fd >>= fun outgoing_is_a_tty ->
+    (* Apply changes. *)
+    term.incoming_fd <- incoming_fd;
+    term.outgoing_fd <- outgoing_fd;
+    term.ic <- incoming_channel;
+    term.oc <- outgoing_channel;
+    term.incoming_is_a_tty <- incoming_is_a_tty;
+    term.outgoing_is_a_tty <- outgoing_is_a_tty;
+    return ()
+  end
 
 let model t = t.model
 let colors t = t.colors
@@ -265,6 +314,9 @@ let escape_time t = t.escape_time
 let set_escape_time t time = t.escape_time <- time
 
 let size term =
+  match term.ttype with
+  | CustomTerminal _ -> term.size
+  | RealTerminal ->
   if term.outgoing_is_a_tty then begin
     let size = get_size_from_fd term.outgoing_fd in
     if size <> term.size then begin
@@ -441,6 +493,8 @@ let enter_raw_mode term =
       term.raw_mode <- true;
       return (Mode_windows mode)
     end else begin
+      (match term.ttype with
+      | RealTerminal ->
       Lwt_unix.tcgetattr term.incoming_fd >>= fun attr ->
       Lwt_unix.tcsetattr term.incoming_fd Unix.TCSAFLUSH {
         attr with
@@ -457,6 +511,51 @@ let enter_raw_mode term =
           Unix.c_vtime = 0;
           Unix.c_isig = false;
       } >>= fun () ->
+        return attr
+      | CustomTerminal { mock_enter_raw_mode; _ } ->
+        mock_enter_raw_mode () >>= fun () ->
+        (* The return value is not used, so the contents do not matter *)
+        return {
+          Unix.c_ignbrk = false;	
+          c_brkint = false;	
+          c_ignpar = false;	
+          c_parmrk = false;	
+          c_inpck = false;	
+          c_istrip = false;	
+          c_inlcr = false;	
+          c_igncr = false;	
+          c_icrnl = false;	
+          c_ixon = false;	
+          c_ixoff = false;	
+          c_opost = false;	
+          c_obaud = 0;	
+          c_ibaud = 0;	
+          c_csize = 0;	
+          c_cstopb = 0;	
+          c_cread = false;	
+          c_parenb = false;	
+          c_parodd = false;	
+          c_hupcl = false;	
+          c_clocal = false;	
+          c_isig = false;	
+          c_icanon = false;	
+          c_noflsh = false;	
+          c_echo = false;	
+          c_echoe = false;	
+          c_echok = false;	
+          c_echonl = false;	
+          c_vintr = ' ';	
+          c_vquit = ' ';	
+          c_verase = ' ';	
+          c_vkill = ' ';	
+          c_veof = ' ';
+          c_veol = ' ';	
+          c_vmin = 0;	
+          c_vtime = 0;	
+          c_vstart = ' ';	
+          c_vstop = ' ';     
+        }
+      ) >>= fun attr ->
       term.raw_mode <- true;
       return (Mode_unix attr)
     end
@@ -470,7 +569,11 @@ let leave_raw_mode term mode =
           return ()
       | Mode_unix attr ->
           term.raw_mode <- false;
-          Lwt_unix.tcsetattr term.incoming_fd Unix.TCSAFLUSH attr
+          (match term.ttype with
+          | RealTerminal ->
+            Lwt_unix.tcsetattr term.incoming_fd Unix.TCSAFLUSH attr
+          | CustomTerminal _ ->
+            return ())
       | Mode_windows mode ->
           term.raw_mode <- false;
           LTerm_windows.set_console_mode term.incoming_fd mode;
@@ -1360,6 +1463,10 @@ let set_size_from_fd fd size = return (set_size_from_fd fd size)
 
 let stdout = lazy(create Lwt_unix.stdin Lwt_io.stdin Lwt_unix.stdout Lwt_io.stdout)
 let stderr = lazy(create Lwt_unix.stdin Lwt_io.stdin Lwt_unix.stderr Lwt_io.stderr)
+(* https://gcc.gnu.org/legacy-ml/gcc-patches/2005-05/msg01793.html *)
+let null_file = if Sys.win32 then "nul" else "/dev/null"
+let null_file_descr () =
+  Lwt_unix.openfile null_file [O_RDWR] 0o640
 
 let print str = Lazy.force stdout >>= fun term -> fprint term str
 let printl str = Lazy.force stdout >>= fun term -> fprintl term str
