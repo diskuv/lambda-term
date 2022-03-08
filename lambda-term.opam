@@ -18,7 +18,6 @@ depends: [
   "dune" {>= "1.1.0"}
   "uucp"
   "uunf"
-  "uchar" { ocaml-version < "4.03" }
 ]
 synopsis: "Terminal manipulation library for OCaml"
 description: """
