@@ -17,7 +17,6 @@ depends: [
   "mew_vi" {>= "0.5.0" & < "0.6.0"}
   "dune" {>= "1.1.0"}
   "uucp"
-  "uunf"
 ]
 synopsis: "Terminal manipulation library for OCaml"
 description: """
